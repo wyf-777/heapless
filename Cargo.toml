@@ -78,7 +78,12 @@ stable_deref_trait = { version = "1", default-features = false }
 
 [dev-dependencies]
 critical-section = { version = "1.1", features = ["std"] }
+divan = "0.1.21"
 static_assertions = "1.1.0"
+
+[[bench]]
+name = "history_buf"
+harness = false
 
 [package.metadata.docs.rs]
 features = [

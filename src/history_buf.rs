@@ -386,16 +386,28 @@ impl<T, S: HistoryBufStorage<T> + ?Sized> HistoryBufInner<T, S> {
     /// Writes an element to the buffer, overwriting the oldest value.
     pub fn write(&mut self, t: T) {
         let _tmp;
+        let write_at = self.write_at;
+        let data = self.data.borrow_mut();
+        let capacity = data.len();
+
+        assert!(capacity != 0, "cannot write to a zero-capacity HistoryBuf");
+        debug_assert!(write_at < capacity);
+
+        // SAFETY: write_at starts at zero and is reset before it reaches
+        // capacity. The zero-capacity case is rejected above, so write_at is
+        // a valid index into data.
+        let slot = unsafe { data.get_unchecked_mut(write_at) };
+
         if self.filled {
             // Copy the old so that it is dropped at the end
             // We don't drop it now so that a panic in its destructor doesn't
             // lead to an invalid state
-            _tmp = unsafe { ptr::read(self.data.borrow_mut()[self.write_at].as_mut_ptr()) };
+            _tmp = unsafe { ptr::read(slot.as_ptr()) };
         }
-        self.data.borrow_mut()[self.write_at] = MaybeUninit::new(t);
+        *slot = MaybeUninit::new(t);
 
         self.write_at += 1;
-        if self.write_at == self.capacity() {
+        if self.write_at == capacity {
             self.write_at = 0;
             self.filled = true;
         }
@@ -708,6 +720,13 @@ mod tests {
 
         x.extend([11, 12].iter());
         assert_eq!(x.as_slice(), [10, 11, 12, 6]);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot write to a zero-capacity HistoryBuf")]
+    fn write_zero_capacity_panics() {
+        let mut x: HistoryBuf<u8, 0> = HistoryBuf::new_with(0);
+        x.write(1);
     }
 
     #[test]

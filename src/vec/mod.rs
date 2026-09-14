@@ -1261,13 +1261,13 @@ impl<T, LenT: LenType, S: VecStorage<T> + ?Sized> VecInner<T, LenT, S> {
         impl<T, LenT: LenType, S: VecStorage<T> + ?Sized> Drop for BackshiftOnDrop<'_, T, LenT, S> {
             fn drop(&mut self) {
                 if self.deleted_cnt > LenT::ZERO {
+                    let v_mut_ptr: *mut T = self.v.as_mut_ptr();
+                    let v_ptr = v_mut_ptr as *const T;
                     // SAFETY: Trailing unchecked items must be valid since we never touch them.
                     unsafe {
                         ptr::copy(
-                            self.v.as_ptr().add(self.processed_len.into_usize()),
-                            self.v
-                                .as_mut_ptr()
-                                .add((self.processed_len - self.deleted_cnt).into_usize()),
+                            v_ptr.add(self.processed_len.into_usize()),
+                            v_mut_ptr.add((self.processed_len - self.deleted_cnt).into_usize()),
                             (self.original_len - self.processed_len).into_usize(),
                         );
                     }
@@ -1879,7 +1879,7 @@ where
 mod tests {
     use core::fmt::Write;
     use std::{
-        panic::catch_unwind,
+        panic::{catch_unwind, AssertUnwindSafe},
         sync::atomic::{AtomicI32, Ordering::Relaxed},
     };
 
@@ -2589,5 +2589,40 @@ mod tests {
         vec.push_mut(4).unwrap();
         *vec.push_mut(5).unwrap() += 10;
         assert_eq!(&vec[..], &[5, 4, 15]);
+    }
+
+    #[test]
+    fn vec_retain_panic() {
+        let mut vec = Vec::<u64, 6>::new();
+        let values = [10u64, 20, 30, 40, 50, 60];
+        for v in values {
+            vec.push(v).unwrap();
+        }
+
+        let res = catch_unwind(AssertUnwindSafe(|| {
+            vec.retain(|k| {
+                if *k == 10u64 {
+                    true
+                } else if *k == 20u64 {
+                    false
+                } else {
+                    panic!("user predicate panic");
+                }
+            });
+        }));
+        assert!(res.is_err(), "expected the predicate to panic");
+    }
+
+    #[test]
+    fn vec_retain() {
+        let mut vec = Vec::<u64, 6>::new();
+        let values = [10u64, 20, 30, 40, 50, 60];
+        for v in values {
+            vec.push(v).unwrap();
+        }
+
+        vec.retain(|k| *k == 10u64);
+
+        assert_eq!(vec, &[10u64]);
     }
 }

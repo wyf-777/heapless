@@ -407,44 +407,47 @@ where
     where
         F: FnMut(&mut K, &mut V) -> bool,
     {
-        self.entries
+        struct DropGuard<'a, K: Eq + Hash, V, const N: usize>(&'a mut CoreMap<K, V, N>);
+        impl<'a, K: Eq + Hash, V, const N: usize> Drop for DropGuard<'a, K, V, N> {
+            fn drop(&mut self) {
+                self.0.reinsert_all();
+            }
+        }
+        DropGuard(self)
+            .0
+            .entries
             .retain_mut(|entry| keep(&mut entry.key, &mut entry.value));
-
-        self.reinsert_all();
     }
 
     fn reinsert_all(&mut self) {
-        if self.entries.len() < self.indices.len() {
-            self.indices = [Pos::none(); N];
+        if self.entries.len() >= self.indices.len() {
+            return;
+        }
+        self.indices = [Pos::none(); N];
 
-            for (index, entry) in self.entries.iter().enumerate() {
-                let mut probe = entry.hash.desired_pos(Self::mask());
-                let mut dist = 0;
+        for (index, entry) in self.entries.iter().enumerate() {
+            let mut probe = entry.hash.desired_pos(Self::mask());
+            let mut dist = 0;
 
-                probe_loop!(probe < self.indices.len(), {
-                    let pos = &mut self.indices[probe];
+            probe_loop!(probe < self.indices.len(), {
+                let pos = &mut self.indices[probe];
 
-                    // SAFETY: we checked above that the entries vec is not full
-                    if let Some(pos) = unsafe { pos.assume_not_full() } {
-                        let entry_hash = pos.hash();
+                // SAFETY: we checked above that the entries vec is not full
+                if let Some(pos) = unsafe { pos.assume_not_full() } {
+                    let entry_hash = pos.hash();
 
-                        // robin hood: steal the spot if it's better for us
-                        let their_dist = entry_hash.probe_distance(Self::mask(), probe);
-                        if their_dist < dist {
-                            Self::insert_phase_2(
-                                &mut self.indices,
-                                probe,
-                                Pos::new(index, entry.hash),
-                            );
-                            break;
-                        }
-                    } else {
-                        *pos = Pos::new(index, entry.hash);
+                    // robin hood: steal the spot if it's better for us
+                    let their_dist = entry_hash.probe_distance(Self::mask(), probe);
+                    if their_dist < dist {
+                        Self::insert_phase_2(&mut self.indices, probe, Pos::new(index, entry.hash));
                         break;
                     }
-                    dist += 1;
-                });
-            }
+                } else {
+                    *pos = Pos::new(index, entry.hash);
+                    break;
+                }
+                dist += 1;
+            });
         }
     }
 
@@ -2439,5 +2442,44 @@ mod tests {
         map.insert(4, 4).unwrap();
         map.insert(8, 8).unwrap();
         map.swap_remove(&0).unwrap(); // never returns
+    }
+
+    #[test]
+    /// Test for <https://github.com/rust-embedded/heapless/issues/688>.
+    fn unwind_safe_retain() {
+        // Capacity must be a power of two > 1.
+        let mut map: FnvIndexMap<u64, u8, 8> = FnvIndexMap::new();
+        let keys = [10u64, 20, 30, 40, 50, 60];
+        for (i, k) in keys.iter().enumerate() {
+            map.insert(*k, i as u8).unwrap();
+        }
+        assert_eq!(map.len(), keys.len());
+
+        // The predicate removes early elements (returning `false`) and then panics on a
+        // later element. `Vec::retain_mut` runs a drop guard that backshifts and shrinks
+        // `entries`, but `self.indices` is only rebuilt *after*.
+        // This then tests that the IndexMap is in a valid state.
+        let res = catch_unwind(AssertUnwindSafe(|| {
+            map.retain(|k, _| {
+                if *k == 10u64 {
+                    true
+                } else if *k == 20u64 {
+                    false
+                } else {
+                    panic!("user predicate panic");
+                }
+            });
+        }));
+        assert!(res.is_err(), "expected the predicate to panic");
+
+        assert!(map.len() < keys.len(), "entries should have shrunk");
+
+        // Querying removed keys may probe stale `indices` slots whose stored entry index
+        // is now out of bounds w.r.t. the shrunk `entries`, leading to OOB get_unchecked.
+        for k in keys.iter() {
+            let _ = map.get(k);
+        }
+
+        println!("survived; map.len={}", map.len());
     }
 }

@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ## [Unreleased]
 
 - Fixed unsoundness in `IndexMap::retain` in the context of panicking predicate.
-- Restored `HistoryBuf::write` performance after the generic storage refactor.
+- Improved `HistoryBuf::write` performance and rejected zero-capacity `HistoryBuf::new_with` at compile time.
 - Added `swap_remove()` to `IndexMap` and `IndexSet`.
 - Deprecated `.remove()` in `IndexMap` and `IndexSet` in favour of `.swap_remove()`.
 - Fixed `IndexMap::truncate` leading to an inconsistent state.

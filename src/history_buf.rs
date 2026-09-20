@@ -280,8 +280,16 @@ where
     /// // All elements are four
     /// assert_eq!(x.as_slice(), [4; 16]);
     /// ```
+    ///
+    /// Zero capacity is rejected at compile time.
+    ///
+    /// ```compile_fail
+    /// use heapless::HistoryBuf;
+    /// let _ = HistoryBuf::<u8, 0>::new_with(0);
+    /// ```
     #[inline]
     pub fn new_with(t: T) -> Self {
+        const { assert!(N > 0) }
         Self {
             phantom: PhantomData,
             data: HistoryBufStorageInner {
@@ -390,11 +398,10 @@ impl<T, S: HistoryBufStorage<T> + ?Sized> HistoryBufInner<T, S> {
         let data = self.data.borrow_mut();
         let capacity = data.len();
 
-        assert!(capacity != 0, "cannot write to a zero-capacity HistoryBuf");
         debug_assert!(write_at < capacity);
 
         // SAFETY: write_at starts at zero and is reset before it reaches
-        // capacity. The zero-capacity case is rejected above, so write_at is
+        // capacity. Both constructors reject zero capacity, so write_at is
         // a valid index into data.
         let slot = unsafe { data.get_unchecked_mut(write_at) };
 
@@ -720,13 +727,6 @@ mod tests {
 
         x.extend([11, 12].iter());
         assert_eq!(x.as_slice(), [10, 11, 12, 6]);
-    }
-
-    #[test]
-    #[should_panic(expected = "cannot write to a zero-capacity HistoryBuf")]
-    fn write_zero_capacity_panics() {
-        let mut x: HistoryBuf<u8, 0> = HistoryBuf::new_with(0);
-        x.write(1);
     }
 
     #[test]
